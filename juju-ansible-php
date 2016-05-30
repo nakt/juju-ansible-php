@@ -1,0 +1,86 @@
+#!/usr/bin/php
+<?php
+
+$hostname_search_str = array('/','.maas');
+$hostname_replace_str = array('-','');
+$list = array();
+$list_all = array();
+$list_meta = array();
+$default = array('f' => 'json', 'o' => '');
+
+$file = shell_exec('juju stat --format json');
+$jujures = (array)json_decode($file);
+
+$options = getopt("f:o:") + $default;
+
+foreach($jujures['machines'] as $value)
+{
+  $physical_host = str_replace($hostname_search_str, $hostname_replace_str, $value->{'dns-name'});
+  $physical_ip = gethostbyname($value->{'dns-name'});
+  $physical_juju_name = $value->{'dns-name'};
+
+  array_push($list_all, $physical_ip);
+  $list['machines'][] = $physical_ip;
+  $list_meta['hostvars'][$physical_ip]['host_name'] = $physical_host;
+  $list_meta['hostvars'][$physical_ip]['ip_address'] = $physical_ip;
+  $list_meta['hostvars'][$physical_ip]['juju_name'] = $physical_juju_name;
+  $list_meta['hostvars'][$physical_ip]['ha'] = false;
+  $list_meta['hostvars'][$physical_ip]['node'] = false;
+}
+
+
+foreach($jujures['services'] as $service)
+{
+  if(isset($service->units))
+  {
+    foreach($service->units as $key => $unit)
+    {
+      $service_props = explode('/', $key);
+      $service_category = $service_props['0'];
+      $service_host = str_replace($hostname_search_str, $hostname_replace_str, $key);
+      $service_ip = gethostbyname($unit->{'public-address'});
+      $service_juju_name = gethostbyname($unit->{'public-address'});
+      $service_ha = (isset($service->relations->ha)) ? true : false;
+      $service_node = explode('/', $unit->{'machine'});
+
+      $list[$service_category][] = $service_ip;
+      array_push($list_all,$service_ip);
+      $list_meta['hostvars'][$service_ip]['host_name'] = $unit->{'public-address'};
+      $list_meta['hostvars'][$service_ip]['ip_address'] = $service_ip;
+      $list_meta['hostvars'][$service_ip]['juju_name'] = $key;
+      $list_meta['hostvars'][$service_ip]['ha'] = $service_ha;
+      $list_meta['hostvars'][$service_ip]['node'] = $service_node['0'];
+    }
+  }
+}
+
+
+switch ($options['f']) {
+  case 'json':
+    $list['allhost'] = array_merge(array_unique($list_all));
+    $list['_meta'] = array_merge($list_meta);
+    echo json_encode($list);
+    break;
+  case 'ansible':
+    foreach ($list as $hostgroup => $host_ips)
+    {
+      echo sprintf("\n[%s]\n", $hostgroup);
+      foreach ($host_ips as $host_ip)
+      {
+        if(isset($options['o']))
+        {
+          echo sprintf("%s %s".PHP_EOL, $host_ip, $options['o']);
+        } else {
+          echo $host_ip.PHP_EOL;
+        }
+      }
+    }
+    break;
+  default:
+    $list['allhost'] = array_merge(array_unique($list_all));
+    $list['_meta'] = array_merge($list_meta);
+    echo json_encode($list);
+    break;
+}
+
+
